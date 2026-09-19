@@ -37,6 +37,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         applicationMenuItem.submenu = applicationMenu
 
+        let viewMenuItem = NSMenuItem()
+        let viewMenu = NSMenu(title: "View")
+        viewMenu.addItem(
+            withTitle: "Reset Zoom",
+            action: #selector(MainViewController.resetVisualizationZoom(_:)),
+            keyEquivalent: "0"
+        )
+        viewMenuItem.submenu = viewMenu
+        mainMenu.addItem(viewMenuItem)
+
         NSApp.mainMenu = mainMenu
     }
 }

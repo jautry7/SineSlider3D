@@ -405,6 +405,10 @@ final class MainViewController: NSViewController {
         pasteboard.setString(css, forType: .string)
     }
 
+    @objc func resetVisualizationZoom(_ sender: Any?) {
+        visualizationView.resetZoom()
+    }
+
     private func updateSample(at position: Double) {
         guard sampleValueLabels.count == 4 else {
             return

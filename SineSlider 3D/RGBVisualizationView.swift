@@ -5,9 +5,11 @@ import simd
 final class RGBVisualizationView: NSView {
     static let size: CGFloat = 512
 
-    private let metalView: MTKView
+    private let metalView: CameraMetalView
     private var renderer: RGBRenderer?
     private let axisLabels: [NSTextField]
+    private var camera = VisualizationCamera()
+    private var curveComponents: [RGBComponents] = []
 
     override var intrinsicContentSize: NSSize {
         NSSize(width: Self.size, height: Self.size)
@@ -15,7 +17,7 @@ final class RGBVisualizationView: NSView {
 
     override init(frame frameRect: NSRect) {
         let device = MTLCreateSystemDefaultDevice()
-        metalView = MTKView(frame: .zero, device: device)
+        metalView = CameraMetalView(frame: .zero, device: device)
         axisLabels = ["0", "R", "G", "B"].map { text in
             let label = NSTextField(labelWithString: text)
             label.font = .systemFont(ofSize: 15, weight: .semibold)
@@ -29,10 +31,13 @@ final class RGBVisualizationView: NSView {
         wantsLayer = true
         layer?.backgroundColor = Self.backgroundColor.cgColor
         layer?.cornerRadius = 10
+        layer?.borderColor = Self.borderColor.cgColor
+        layer?.borderWidth = 1
         layer?.masksToBounds = true
 
         configureMetalView(device: device)
         configureAxisLabels()
+        configureCameraInteraction()
     }
 
     @available(*, unavailable)
@@ -50,8 +55,13 @@ final class RGBVisualizationView: NSView {
         let components = (0..<sampleCount).map { index in
             colorFactory.components(at: Double(index) / Double(sampleCount - 1))
         }
-        renderer?.updateCurve(components)
-        metalView.setNeedsDisplay(metalView.bounds)
+        curveComponents = components
+        updateScene()
+    }
+
+    func resetZoom() {
+        camera.zoom = VisualizationCamera.defaultZoom
+        updateScene()
     }
 
     private func configureMetalView(device: MTLDevice?) {
@@ -95,20 +105,45 @@ final class RGBVisualizationView: NSView {
         }
     }
 
+    private func configureCameraInteraction() {
+        metalView.onDrag = { [weak self] deltaX, deltaY in
+            guard let self else {
+                return
+            }
+            camera.angleB += Float(deltaX) / 100.0
+            camera.angleR += Float(deltaY) / 100.0
+            updateScene()
+        }
+
+        metalView.onZoom = { [weak self] zoomFactor in
+            guard let self else {
+                return
+            }
+            camera.zoom = min(3.0, max(0.35, camera.zoom * zoomFactor))
+            updateScene()
+        }
+    }
+
+    private func updateScene() {
+        renderer?.updateScene(curveComponents, camera: camera)
+        positionAxisLabels()
+        metalView.setNeedsDisplay(metalView.bounds)
+    }
+
     private func positionAxisLabels() {
         guard bounds.width > 0, bounds.height > 0 else {
             return
         }
 
         let labelCoordinates = [
-            SIMD3<Float>(-146, -146, -146),
-            SIMD3<Float>(137, -146, -146),
-            SIMD3<Float>(-146, 137, -146),
-            SIMD3<Float>(-146, -146, 137)
+            SIMD3<Float>(-141.5, -141.5, -141.5),
+            SIMD3<Float>(134.5, -141.5, -141.5),
+            SIMD3<Float>(-141.5, 134.5, -141.5),
+            SIMD3<Float>(-141.5, -141.5, 134.5)
         ]
 
         for (label, coordinate) in zip(axisLabels, labelCoordinates) {
-            let normalized = ColorInspectorProjection.project(coordinate)
+            let normalized = camera.project(coordinate)
             let center = NSPoint(
                 x: bounds.minX + CGFloat(normalized.x) * bounds.width,
                 y: bounds.minY + CGFloat(normalized.y) * bounds.height
@@ -122,7 +157,55 @@ final class RGBVisualizationView: NSView {
     }
 
     private static var backgroundColor: NSColor {
-        NSColor.tertiarySystemFill
+        NSColor(calibratedWhite: 0.2, alpha: 1)
+    }
+
+    private static var borderColor: NSColor {
+        NSColor(calibratedWhite: 0.3, alpha: 1)
+    }
+}
+
+private final class CameraMetalView: MTKView {
+    var onDrag: ((CGFloat, CGFloat) -> Void)?
+    var onZoom: ((Float) -> Void)?
+
+    private var isDraggingCamera = false
+
+    override var acceptsFirstResponder: Bool {
+        true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        isDraggingCamera = true
+        window?.makeFirstResponder(self)
+        NSCursor.closedHand.push()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard isDraggingCamera else {
+            return
+        }
+        onDrag?(event.deltaX, event.deltaY)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if isDraggingCamera {
+            NSCursor.pop()
+        }
+        isDraggingCamera = false
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        let delta = min(20.0, max(-20.0, event.scrollingDeltaY))
+        onZoom?(Float(exp(delta * 0.012)))
+    }
+
+    override func magnify(with event: NSEvent) {
+        onZoom?(Float(max(0.1, 1.0 + event.magnification)))
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .openHand)
     }
 }
 
@@ -135,8 +218,8 @@ private final class RGBRenderer: NSObject, MTKViewDelegate {
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private let pipelineState: MTLRenderPipelineState
-    private let cubeBuffer: MTLBuffer
-    private let cubeVertexCount: Int
+    private var cubeBuffer: MTLBuffer?
+    private var cubeVertexCount = 0
     private var curveBuffer: MTLBuffer?
     private var curveVertexCount = 0
 
@@ -167,27 +250,24 @@ private final class RGBRenderer: NSObject, MTKViewDelegate {
         pipelineDescriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
         pipelineState = try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
 
-        let cubeVertices = Self.makeCubeVertices()
-        guard let cubeBuffer = device.makeBuffer(
-            bytes: cubeVertices,
-            length: MemoryLayout<Vertex>.stride * cubeVertices.count
-        ) else {
-            throw RendererError.bufferUnavailable
-        }
-        self.cubeBuffer = cubeBuffer
-        cubeVertexCount = cubeVertices.count
-
         super.init()
     }
 
-    func updateCurve(_ components: [RGBComponents]) {
-        let vertices = components.map { components in
+    func updateScene(_ components: [RGBComponents], camera: VisualizationCamera) {
+        let cubeVertices = Self.makeCubeVertices(camera: camera)
+        cubeVertexCount = cubeVertices.count
+        cubeBuffer = device.makeBuffer(
+            bytes: cubeVertices,
+            length: MemoryLayout<Vertex>.stride * cubeVertices.count
+        )
+
+        let centerlineVertices = components.map { components in
             let coordinate = SIMD3<Float>(
                 Float(components.red * 255.0 - 128.0),
                 Float(components.green * 255.0 - 128.0),
                 Float(components.blue * 255.0 - 128.0)
             )
-            let projected = ColorInspectorProjection.clipPosition(coordinate)
+            let projected = camera.clipPosition(coordinate)
             return Vertex(
                 position: SIMD4<Float>(projected.x, projected.y, 0, 1),
                 color: SIMD4<Float>(
@@ -198,6 +278,7 @@ private final class RGBRenderer: NSObject, MTKViewDelegate {
                 )
             )
         }
+        let vertices = Self.makeLineStripVertices(from: centerlineVertices, width: 3)
 
         curveVertexCount = vertices.count
         curveBuffer = device.makeBuffer(
@@ -219,12 +300,14 @@ private final class RGBRenderer: NSObject, MTKViewDelegate {
         }
 
         encoder.setRenderPipelineState(pipelineState)
-        encoder.setVertexBuffer(cubeBuffer, offset: 0, index: 0)
-        encoder.drawPrimitives(type: .line, vertexStart: 0, vertexCount: cubeVertexCount)
+        if let cubeBuffer {
+            encoder.setVertexBuffer(cubeBuffer, offset: 0, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: cubeVertexCount)
+        }
 
         if let curveBuffer, curveVertexCount > 1 {
             encoder.setVertexBuffer(curveBuffer, offset: 0, index: 0)
-            encoder.drawPrimitives(type: .lineStrip, vertexStart: 0, vertexCount: curveVertexCount)
+            encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: curveVertexCount)
         }
 
         encoder.endEncoding()
@@ -232,7 +315,7 @@ private final class RGBRenderer: NSObject, MTKViewDelegate {
         commandBuffer.commit()
     }
 
-    private static func makeCubeVertices() -> [Vertex] {
+    private static func makeCubeVertices(camera: VisualizationCamera) -> [Vertex] {
         let corners = [
             SIMD3<Float>(-128, -128, -128),
             SIMD3<Float>(-128, 127, 127),
@@ -249,18 +332,118 @@ private final class RGBRenderer: NSObject, MTKViewDelegate {
         for nearIndex in 0..<4 {
             for farIndex in 4..<8 where nearIndex + farIndex != 7 {
                 for cornerIndex in [nearIndex, farIndex] {
-                    let projected = ColorInspectorProjection.clipPosition(corners[cornerIndex])
-                    vertices.append(
-                        Vertex(
-                            position: SIMD4<Float>(projected.x, projected.y, 0, 1),
-                            color: edgeColor
+                    let projected = camera.clipPosition(corners[cornerIndex])
+                    if cornerIndex == nearIndex {
+                        let farProjected = camera.clipPosition(corners[farIndex])
+                        vertices.append(
+                            contentsOf: makeSegmentVertices(
+                                from: projected,
+                                to: farProjected,
+                                width: 1,
+                                color: edgeColor
+                            )
                         )
-                    )
+                    }
                 }
             }
         }
 
         return vertices
+    }
+
+    private static func makeSegmentVertices(
+        from start: SIMD2<Float>,
+        to end: SIMD2<Float>,
+        width: Float,
+        color: SIMD4<Float>
+    ) -> [Vertex] {
+        let direction = normalized(end - start)
+        let halfWidth = width / Float(RGBVisualizationView.size)
+        let offset = SIMD2<Float>(-direction.y, direction.x) * halfWidth
+        let startLeft = start + offset
+        let startRight = start - offset
+        let endLeft = end + offset
+        let endRight = end - offset
+
+        return [
+            Vertex(position: clipPosition(startLeft), color: color),
+            Vertex(position: clipPosition(startRight), color: color),
+            Vertex(position: clipPosition(endLeft), color: color),
+            Vertex(position: clipPosition(endLeft), color: color),
+            Vertex(position: clipPosition(startRight), color: color),
+            Vertex(position: clipPosition(endRight), color: color)
+        ]
+    }
+
+    private static func makeLineStripVertices(from centerline: [Vertex], width: Float) -> [Vertex] {
+        guard centerline.count > 1 else {
+            return centerline
+        }
+
+        let halfWidth = width / Float(RGBVisualizationView.size)
+        var vertices: [Vertex] = []
+        vertices.reserveCapacity(centerline.count * 2)
+
+        for index in centerline.indices {
+            let current = centerline[index]
+            let currentPoint = SIMD2<Float>(current.position.x, current.position.y)
+            let offset: SIMD2<Float>
+
+            if index == centerline.startIndex {
+                let next = centerline[centerline.index(after: index)]
+                let direction = normalized(
+                    SIMD2<Float>(next.position.x, next.position.y) - currentPoint
+                )
+                offset = SIMD2<Float>(-direction.y, direction.x) * halfWidth
+            } else if index == centerline.index(before: centerline.endIndex) {
+                let previous = centerline[centerline.index(before: index)]
+                let direction = normalized(
+                    currentPoint - SIMD2<Float>(previous.position.x, previous.position.y)
+                )
+                offset = SIMD2<Float>(-direction.y, direction.x) * halfWidth
+            } else {
+                let previous = centerline[centerline.index(before: index)]
+                let next = centerline[centerline.index(after: index)]
+                let incoming = normalized(
+                    currentPoint - SIMD2<Float>(previous.position.x, previous.position.y)
+                )
+                let outgoing = normalized(
+                    SIMD2<Float>(next.position.x, next.position.y) - currentPoint
+                )
+                let incomingNormal = SIMD2<Float>(-incoming.y, incoming.x)
+                let outgoingNormal = SIMD2<Float>(-outgoing.y, outgoing.x)
+                let normalSum = incomingNormal + outgoingNormal
+                let miter = simd_length(normalSum) > 0.000_001
+                    ? normalized(normalSum)
+                    : outgoingNormal
+                let miterScale = halfWidth / max(0.25, simd_dot(miter, outgoingNormal))
+                offset = miter * min(miterScale, halfWidth * 2)
+            }
+
+            vertices.append(
+                Vertex(
+                    position: clipPosition(currentPoint + offset),
+                    color: current.color
+                )
+            )
+            vertices.append(
+                Vertex(
+                    position: clipPosition(currentPoint - offset),
+                    color: current.color
+                )
+            )
+        }
+
+        return vertices
+    }
+
+    private static func normalized(_ vector: SIMD2<Float>) -> SIMD2<Float> {
+        let length = simd_length(vector)
+        return length > 0.000_001 ? vector / length : SIMD2<Float>(1, 0)
+    }
+
+    private static func clipPosition(_ point: SIMD2<Float>) -> SIMD4<Float> {
+        SIMD4<Float>(point.x, point.y, 0, 1)
     }
 
     private enum RendererError: Error {
@@ -301,12 +484,16 @@ private final class RGBRenderer: NSObject, MTKViewDelegate {
         """
 }
 
-private enum ColorInspectorProjection {
-    private static let angleB: Float = -0.6125
-    private static let angleR: Float = 2.0
+private struct VisualizationCamera {
+    static let defaultZoom: Float = 0.95
+
+    var angleB: Float = -0.6125
+    var angleR: Float = 2.0
+    var zoom: Float = Self.defaultZoom
+
     private static let distance: Float = 33 * 33
 
-    static func project(_ coordinate: SIMD3<Float>) -> SIMD2<Float> {
+    func project(_ coordinate: SIMD3<Float>) -> SIMD2<Float> {
         let cosB = cos(angleB)
         let sinB = sin(angleB)
         let cosR = cos(angleR)
@@ -315,16 +502,16 @@ private enum ColorInspectorProjection {
         let intermediateY = sinB * coordinate.x + cosB * coordinate.y
         let projectedY = cosR * intermediateY - sinR * coordinate.z
         let depth = sinR * intermediateY + cosR * coordinate.z
-        let perspectiveScale = distance / (depth + distance)
+        let perspectiveScale = Self.distance / (depth + Self.distance)
         let projectedX = (cosB * coordinate.x - sinB * coordinate.y) * perspectiveScale
 
         return SIMD2<Float>(
-            (projectedX + 256.5) / 512.0,
-            1.0 - ((projectedY * perspectiveScale + 256.5) / 512.0)
+            (projectedX * zoom + 256.5) / 512.0,
+            1.0 - ((projectedY * perspectiveScale * zoom + 256.5) / 512.0)
         )
     }
 
-    static func clipPosition(_ coordinate: SIMD3<Float>) -> SIMD2<Float> {
+    func clipPosition(_ coordinate: SIMD3<Float>) -> SIMD2<Float> {
         let normalized = project(coordinate)
         return SIMD2<Float>(normalized.x * 2.0 - 1.0, normalized.y * 2.0 - 1.0)
     }
