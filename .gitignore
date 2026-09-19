@@ -1,0 +1,14 @@
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Xcode user state and local build data
+xcuserdata/
+*.xcuserstate
+DerivedData/
+*.xccheckout
+*.xcscmblueprint
