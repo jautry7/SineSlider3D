@@ -11,7 +11,7 @@ final class MainViewController: NSViewController {
     }
 
     private let colorFactory = ColorFactory()
-    private let visualizationView = VisualizationPlaceholderView()
+    private let visualizationView = RGBVisualizationView()
     private lazy var gradientView = GradientView(colorFactory: colorFactory)
     private let channelSelector = NSSegmentedControl(
         labels: ColorChannel.allCases.map(\.name),
@@ -49,6 +49,7 @@ final class MainViewController: NSViewController {
         super.viewDidLoad()
         configureLayout()
         selectChannel(nil)
+        visualizationView.updateCurve(using: colorFactory)
         updateSample(at: 0)
     }
 
@@ -90,8 +91,8 @@ final class MainViewController: NSViewController {
                 constant: -WindowLayout.bottomPadding
             ),
 
-            visualizationView.widthAnchor.constraint(equalToConstant: VisualizationPlaceholderView.size),
-            visualizationView.heightAnchor.constraint(equalToConstant: VisualizationPlaceholderView.size),
+            visualizationView.widthAnchor.constraint(equalToConstant: RGBVisualizationView.size),
+            visualizationView.heightAnchor.constraint(equalToConstant: RGBVisualizationView.size),
             gradientView.widthAnchor.constraint(equalToConstant: GradientView.width),
             sampleContainer.widthAnchor.constraint(equalToConstant: GradientView.width),
             sampleContainer.heightAnchor.constraint(equalToConstant: 24),
@@ -383,6 +384,7 @@ final class MainViewController: NSViewController {
         )
         percentageLabels[transform]?.stringValue = "\(sender.integerValue)%"
         gradientView.needsDisplay = true
+        visualizationView.updateCurve(using: colorFactory)
         updateSample(at: selectedPosition)
     }
 
