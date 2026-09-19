@@ -11,6 +11,7 @@ final class RGBVisualizationView: NSView {
     private let markerView = ColorMarkerView()
     private var camera = VisualizationCamera()
     private var curveComponents: [RGBComponents] = []
+    private var approximationStops: [CSSGradientStop]?
     private var markerPosition: Double?
     private var markerCoordinate: SIMD3<Float>?
 
@@ -55,22 +56,29 @@ final class RGBVisualizationView: NSView {
         positionMarker()
     }
 
-    func updateCurve(using colorFactory: ColorFactory) {
+    func updateCurve(
+        using colorFactory: ColorFactory,
+        approximationStops: [CSSGradientStop]? = nil
+    ) {
         let sampleCount = 1024
         let components = (0..<sampleCount).map { index in
             colorFactory.components(at: Double(index) / Double(sampleCount - 1))
         }
         curveComponents = components
+        self.approximationStops = approximationStops
         if let markerPosition {
-            updateMarker(at: markerPosition, using: colorFactory)
+            let markerComponents = approximationStops.map {
+                CSSGradientExporter.components(at: markerPosition, stops: $0)
+            } ?? colorFactory.components(at: markerPosition)
+            updateMarker(using: markerComponents)
         }
         updateScene()
     }
 
-    func showMarker(at position: Double, using colorFactory: ColorFactory) {
+    func showMarker(at position: Double, components: RGBComponents) {
         let clampedPosition = min(1.0, max(0.0, position))
         markerPosition = clampedPosition
-        updateMarker(at: clampedPosition, using: colorFactory)
+        updateMarker(using: components)
         markerView.isHidden = false
         positionMarker()
     }
@@ -152,14 +160,17 @@ final class RGBVisualizationView: NSView {
     }
 
     private func updateScene() {
-        renderer?.updateScene(curveComponents, camera: camera)
+        renderer?.updateScene(
+            curveComponents,
+            approximationStops: approximationStops,
+            camera: camera
+        )
         positionAxisLabels()
         positionMarker()
         metalView.setNeedsDisplay(metalView.bounds)
     }
 
-    private func updateMarker(at position: Double, using colorFactory: ColorFactory) {
-        let components = colorFactory.components(at: position)
+    private func updateMarker(using components: RGBComponents) {
         markerCoordinate = SIMD3<Float>(
             Float(components.red * 255.0 - 128.0),
             Float(components.green * 255.0 - 128.0),
@@ -311,8 +322,10 @@ private final class RGBRenderer: NSObject, MTKViewDelegate {
     private let pipelineState: MTLRenderPipelineState
     private var cubeBuffer: MTLBuffer?
     private var cubeVertexCount = 0
-    private var curveBuffer: MTLBuffer?
-    private var curveVertexCount = 0
+    private var sineCurveBuffer: MTLBuffer?
+    private var sineCurveVertexCount = 0
+    private var approximationBuffer: MTLBuffer?
+    private var approximationVertexCount = 0
 
     init(device: MTLDevice) throws {
         self.device = device
@@ -344,7 +357,11 @@ private final class RGBRenderer: NSObject, MTKViewDelegate {
         super.init()
     }
 
-    func updateScene(_ components: [RGBComponents], camera: VisualizationCamera) {
+    func updateScene(
+        _ components: [RGBComponents],
+        approximationStops: [CSSGradientStop]?,
+        camera: VisualizationCamera
+    ) {
         let cubeVertices = Self.makeCubeVertices(camera: camera)
         cubeVertexCount = cubeVertices.count
         cubeBuffer = device.makeBuffer(
@@ -352,7 +369,8 @@ private final class RGBRenderer: NSObject, MTKViewDelegate {
             length: MemoryLayout<Vertex>.stride * cubeVertices.count
         )
 
-        let centerlineVertices = components.map { components in
+        let sineOpacity: Float = approximationStops == nil ? 1 : 0.15
+        let sineCenterline = components.map { components in
             let coordinate = SIMD3<Float>(
                 Float(components.red * 255.0 - 128.0),
                 Float(components.green * 255.0 - 128.0),
@@ -365,17 +383,50 @@ private final class RGBRenderer: NSObject, MTKViewDelegate {
                     Float(components.red),
                     Float(components.green),
                     Float(components.blue),
-                    1
+                    sineOpacity
                 )
             )
         }
-        let vertices = Self.makeLineStripVertices(from: centerlineVertices, width: 3)
+        let sineVertices = Self.makeLineStripVertices(from: sineCenterline, width: 3)
 
-        curveVertexCount = vertices.count
-        curveBuffer = device.makeBuffer(
-            bytes: vertices,
-            length: MemoryLayout<Vertex>.stride * vertices.count
+        sineCurveVertexCount = sineVertices.count
+        sineCurveBuffer = device.makeBuffer(
+            bytes: sineVertices,
+            length: MemoryLayout<Vertex>.stride * sineVertices.count
         )
+
+        if let approximationStops {
+            let approximationCenterline = approximationStops.map { stop in
+                let components = stop.components
+                let coordinate = SIMD3<Float>(
+                    Float(components.red * 255.0 - 128.0),
+                    Float(components.green * 255.0 - 128.0),
+                    Float(components.blue * 255.0 - 128.0)
+                )
+                let projected = camera.clipPosition(coordinate)
+                return Vertex(
+                    position: SIMD4<Float>(projected.x, projected.y, 0, 1),
+                    color: SIMD4<Float>(
+                        Float(components.red),
+                        Float(components.green),
+                        Float(components.blue),
+                        1
+                    )
+                )
+            }
+            let approximationVertices = Self.makeLineStripVertices(
+                from: approximationCenterline,
+                width: 3
+            )
+            approximationVertexCount = approximationVertices.count
+            approximationBuffer = device.makeBuffer(
+                bytes: approximationVertices,
+                length: MemoryLayout<Vertex>.stride * approximationVertices.count
+            )
+        } else {
+            approximationBuffer = nil
+            approximationVertexCount = 0
+        }
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
@@ -396,9 +447,22 @@ private final class RGBRenderer: NSObject, MTKViewDelegate {
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: cubeVertexCount)
         }
 
-        if let curveBuffer, curveVertexCount > 1 {
-            encoder.setVertexBuffer(curveBuffer, offset: 0, index: 0)
-            encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: curveVertexCount)
+        if let sineCurveBuffer, sineCurveVertexCount > 1 {
+            encoder.setVertexBuffer(sineCurveBuffer, offset: 0, index: 0)
+            encoder.drawPrimitives(
+                type: .triangleStrip,
+                vertexStart: 0,
+                vertexCount: sineCurveVertexCount
+            )
+        }
+
+        if let approximationBuffer, approximationVertexCount > 1 {
+            encoder.setVertexBuffer(approximationBuffer, offset: 0, index: 0)
+            encoder.drawPrimitives(
+                type: .triangleStrip,
+                vertexStart: 0,
+                vertexCount: approximationVertexCount
+            )
         }
 
         encoder.endEncoding()

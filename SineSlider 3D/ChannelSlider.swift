@@ -24,7 +24,8 @@ private final class ChannelSliderCell: NSSliderCell {
             width: fillWidth,
             height: trackRect.height
         )
-        channelColor.setFill()
+        let fillColor = isEnabled ? channelColor : NSColor.disabledControlTextColor
+        fillColor.setFill()
         let cornerRadius = trackRect.height / 2
         NSBezierPath(roundedRect: fillRect, xRadius: cornerRadius, yRadius: cornerRadius).fill()
     }

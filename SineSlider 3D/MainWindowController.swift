@@ -11,12 +11,13 @@ final class MainWindowController: NSWindowController {
             defer: false
         )
 
+        self.init(window: window)
+
         window.title = "SineSlider 3D"
         window.contentViewController = contentViewController
-        window.center()
+        window.isRestorable = false
         window.isReleasedWhenClosed = false
         window.backgroundColor = .windowBackgroundColor
-
-        self.init(window: window)
+        window.center()
     }
 }

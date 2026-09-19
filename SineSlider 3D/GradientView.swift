@@ -8,6 +8,11 @@ final class GradientView: NSView {
     var position = 0.0
     var onPositionChange: ((Double) -> Void)?
     var onHoverStateChange: ((Bool) -> Void)?
+    var approximationStops: [CSSGradientStop]? {
+        didSet {
+            needsDisplay = true
+        }
+    }
 
     private var trackingArea: NSTrackingArea?
 
@@ -80,7 +85,7 @@ final class GradientView: NSView {
         let columnCount = max(2, Int(bounds.width.rounded()))
         for column in 0..<columnCount {
             let samplePosition = Double(column) / Double(columnCount - 1)
-            colorFactory.color(at: samplePosition).setFill()
+            color(at: samplePosition).setFill()
             NSRect(
                 x: gradientRect.minX + CGFloat(column),
                 y: gradientRect.minY,
@@ -91,6 +96,20 @@ final class GradientView: NSView {
         NSGraphicsContext.restoreGraphicsState()
 
         drawPositionIndicators()
+    }
+
+    private func color(at position: Double) -> NSColor {
+        guard let approximationStops else {
+            return colorFactory.color(at: position)
+        }
+
+        let components = CSSGradientExporter.components(at: position, stops: approximationStops)
+        return NSColor(
+            calibratedRed: CGFloat(components.red),
+            green: CGFloat(components.green),
+            blue: CGFloat(components.blue),
+            alpha: 1
+        )
     }
 
     private func updatePosition(with event: NSEvent) {

@@ -24,19 +24,20 @@ final class MainViewController: NSViewController {
     private let sampleContainer = NSView()
     private let leftColumn = NSStackView()
     private let rightColumn = NSStackView()
-    private let stopCountLabel = NSTextField(labelWithString: "20 stops")
+    private let stopCountLabel = NSTextField(labelWithString: "5 stops")
     private let stopCountSlider = ChannelSlider(
-        value: 20,
+        value: 5,
         minValue: 2,
-        maxValue: 50,
+        maxValue: 20,
         target: nil,
         action: nil
     )
 
     private var selectedChannel: ColorChannel = .red
     private var selectedPosition = 0.0
-    private var stopCount = 20
-    private var showsLinearApproximation = true
+    private var stopCount = 5
+    private var showsLinearApproximation = false
+    private var approximationStops: [CSSGradientStop]?
     private var sliders: [CurveTransform: ChannelSlider] = [:]
     private var percentageLabels: [CurveTransform: NSTextField] = [:]
     private var sampleValueLabels: [NSTextField] = []
@@ -49,7 +50,7 @@ final class MainViewController: NSViewController {
         super.viewDidLoad()
         configureLayout()
         selectChannel(nil)
-        visualizationView.updateCurve(using: colorFactory)
+        refreshGradientPresentation()
         updateSample(at: 0)
     }
 
@@ -116,14 +117,20 @@ final class MainViewController: NSViewController {
                 return
             }
             updateSample(at: position)
-            visualizationView.showMarker(at: position, using: colorFactory)
+            visualizationView.showMarker(
+                at: position,
+                components: displayedComponents(at: position)
+            )
         }
         gradientView.onHoverStateChange = { [weak self] isHovering in
             guard let self else {
                 return
             }
             if isHovering {
-                visualizationView.showMarker(at: selectedPosition, using: colorFactory)
+                visualizationView.showMarker(
+                    at: selectedPosition,
+                    components: displayedComponents(at: selectedPosition)
+                )
             } else {
                 visualizationView.hideMarker()
             }
@@ -199,7 +206,7 @@ final class MainViewController: NSViewController {
             target: self,
             action: #selector(approximationVisibilityChanged(_:))
         )
-        approximationCheckbox.state = .on
+        approximationCheckbox.state = .off
 
         let separator = NSBox()
         separator.boxType = .separator
@@ -210,6 +217,7 @@ final class MainViewController: NSViewController {
         stopCountLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
         stopCountLabel.textColor = .secondaryLabelColor
         stopCountLabel.alignment = .right
+        stopCountLabel.alphaValue = 0
 
         let fidelityHeading = NSStackView(views: [fidelityLabel, stopCountLabel])
         fidelityHeading.orientation = .horizontal
@@ -218,6 +226,8 @@ final class MainViewController: NSViewController {
 
         stopCountSlider.isContinuous = true
         stopCountSlider.channelColor = .controlAccentColor
+        stopCountSlider.isEnabled = false
+        stopCountSlider.alphaValue = 0.3
         stopCountSlider.target = self
         stopCountSlider.action = #selector(stopCountChanged(_:))
 
@@ -397,19 +407,27 @@ final class MainViewController: NSViewController {
             transform: transform
         )
         percentageLabels[transform]?.stringValue = "\(sender.integerValue)%"
-        gradientView.needsDisplay = true
-        visualizationView.updateCurve(using: colorFactory)
+        refreshGradientPresentation()
         updateSample(at: selectedPosition)
     }
 
     @objc private func stopCountChanged(_ sender: NSSlider) {
-        stopCount = min(50, max(2, sender.integerValue))
+        stopCount = min(20, max(2, sender.integerValue))
         sender.integerValue = stopCount
         stopCountLabel.stringValue = "\(stopCount) stops"
+        if showsLinearApproximation {
+            refreshGradientPresentation()
+            updateSample(at: selectedPosition)
+        }
     }
 
     @objc private func approximationVisibilityChanged(_ sender: NSButton) {
         showsLinearApproximation = sender.state == .on
+        stopCountSlider.isEnabled = showsLinearApproximation
+        stopCountSlider.alphaValue = showsLinearApproximation ? 1 : 0.3
+        stopCountLabel.alphaValue = showsLinearApproximation ? 1 : 0
+        refreshGradientPresentation()
+        updateSample(at: selectedPosition)
     }
 
     @objc private func copyCSS(_ sender: NSButton) {
@@ -430,9 +448,28 @@ final class MainViewController: NSViewController {
 
         selectedPosition = min(1.0, max(0.0, position))
         sampleValueLabels[0].stringValue = "\(Int((selectedPosition * 100).rounded()))"
+        let components = displayedComponents(at: selectedPosition)
         for channel in ColorChannel.allCases {
-            let value = colorFactory.value(for: channel, at: selectedPosition)
+            let value = components.eightBitValue(for: channel)
             sampleValueLabels[channel.rawValue + 1].stringValue = "\(value)"
         }
+    }
+
+    private func refreshGradientPresentation() {
+        approximationStops = showsLinearApproximation
+            ? CSSGradientExporter.stops(count: stopCount, colorFactory: colorFactory)
+            : nil
+        gradientView.approximationStops = approximationStops
+        visualizationView.updateCurve(
+            using: colorFactory,
+            approximationStops: approximationStops
+        )
+    }
+
+    private func displayedComponents(at position: Double) -> RGBComponents {
+        guard let approximationStops else {
+            return colorFactory.components(at: position)
+        }
+        return CSSGradientExporter.components(at: position, stops: approximationStops)
     }
 }

@@ -9,7 +9,7 @@ enum CSSGradientExporter {
     private static let candidateIntervalCount = 4096
 
     static func stops(count: Int, colorFactory: ColorFactory) -> [CSSGradientStop] {
-        let requestedCount = min(50, max(2, count))
+        let requestedCount = min(20, max(2, count))
         var stops = [
             CSSGradientStop(position: 0, components: colorFactory.components(at: 0)),
             CSSGradientStop(position: 1, components: colorFactory.components(at: 1))
@@ -66,6 +66,29 @@ enum CSSGradientExporter {
         }
 
         return "linear-gradient(to right, \(colorStops.joined(separator: ", ")))"
+    }
+
+    static func components(at position: Double, stops: [CSSGradientStop]) -> RGBComponents {
+        guard let first = stops.first, let last = stops.last else {
+            return RGBComponents(red: 0, green: 0, blue: 0)
+        }
+
+        let clampedPosition = min(1.0, max(0.0, position))
+        if clampedPosition <= first.position {
+            return first.components
+        }
+        if clampedPosition >= last.position {
+            return last.components
+        }
+
+        for index in 1..<stops.count where clampedPosition <= stops[index].position {
+            let start = stops[index - 1]
+            let end = stops[index]
+            let fraction = (clampedPosition - start.position) / (end.position - start.position)
+            return start.components.interpolated(to: end.components, fraction: fraction)
+        }
+
+        return last.components
     }
 
     private static func percentageString(_ position: Double) -> String {
