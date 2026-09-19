@@ -8,8 +8,11 @@ final class RGBVisualizationView: NSView {
     private let metalView: CameraMetalView
     private var renderer: RGBRenderer?
     private let axisLabels: [NSTextField]
+    private let markerView = ColorMarkerView()
     private var camera = VisualizationCamera()
     private var curveComponents: [RGBComponents] = []
+    private var markerPosition: Double?
+    private var markerCoordinate: SIMD3<Float>?
 
     override var intrinsicContentSize: NSSize {
         NSSize(width: Self.size, height: Self.size)
@@ -37,6 +40,7 @@ final class RGBVisualizationView: NSView {
 
         configureMetalView(device: device)
         configureAxisLabels()
+        configureMarker()
         configureCameraInteraction()
     }
 
@@ -48,6 +52,7 @@ final class RGBVisualizationView: NSView {
     override func layout() {
         super.layout()
         positionAxisLabels()
+        positionMarker()
     }
 
     func updateCurve(using colorFactory: ColorFactory) {
@@ -56,7 +61,24 @@ final class RGBVisualizationView: NSView {
             colorFactory.components(at: Double(index) / Double(sampleCount - 1))
         }
         curveComponents = components
+        if let markerPosition {
+            updateMarker(at: markerPosition, using: colorFactory)
+        }
         updateScene()
+    }
+
+    func showMarker(at position: Double, using colorFactory: ColorFactory) {
+        let clampedPosition = min(1.0, max(0.0, position))
+        markerPosition = clampedPosition
+        updateMarker(at: clampedPosition, using: colorFactory)
+        markerView.isHidden = false
+        positionMarker()
+    }
+
+    func hideMarker() {
+        markerView.isHidden = true
+        markerPosition = nil
+        markerCoordinate = nil
     }
 
     func resetZoom() {
@@ -105,6 +127,11 @@ final class RGBVisualizationView: NSView {
         }
     }
 
+    private func configureMarker() {
+        markerView.isHidden = true
+        addSubview(markerView)
+    }
+
     private func configureCameraInteraction() {
         metalView.onDrag = { [weak self] deltaX, deltaY in
             guard let self else {
@@ -127,7 +154,35 @@ final class RGBVisualizationView: NSView {
     private func updateScene() {
         renderer?.updateScene(curveComponents, camera: camera)
         positionAxisLabels()
+        positionMarker()
         metalView.setNeedsDisplay(metalView.bounds)
+    }
+
+    private func updateMarker(at position: Double, using colorFactory: ColorFactory) {
+        let components = colorFactory.components(at: position)
+        markerCoordinate = SIMD3<Float>(
+            Float(components.red * 255.0 - 128.0),
+            Float(components.green * 255.0 - 128.0),
+            Float(components.blue * 255.0 - 128.0)
+        )
+        markerView.fillColor = NSColor(
+            calibratedRed: CGFloat(components.red),
+            green: CGFloat(components.green),
+            blue: CGFloat(components.blue),
+            alpha: 1
+        )
+    }
+
+    private func positionMarker() {
+        guard let markerCoordinate, !markerView.isHidden else {
+            return
+        }
+
+        let normalized = camera.project(markerCoordinate)
+        markerView.frame.origin = NSPoint(
+            x: CGFloat(normalized.x) * bounds.width - ColorMarkerView.size / 2,
+            y: CGFloat(normalized.y) * bounds.height - ColorMarkerView.size / 2
+        )
     }
 
     private func positionAxisLabels() {
@@ -162,6 +217,42 @@ final class RGBVisualizationView: NSView {
 
     private static var borderColor: NSColor {
         NSColor(calibratedWhite: 0.3, alpha: 1)
+    }
+}
+
+private final class ColorMarkerView: NSView {
+    static let size: CGFloat = 15
+
+    var fillColor: NSColor = .clear {
+        didSet {
+            needsDisplay = true
+        }
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: Self.size, height: Self.size)
+    }
+
+    init() {
+        super.init(frame: NSRect(x: 0, y: 0, width: Self.size, height: Self.size))
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        NSColor.black.setFill()
+        NSBezierPath(ovalIn: bounds).fill()
+
+        NSColor.white.setFill()
+        NSBezierPath(ovalIn: bounds.insetBy(dx: 1, dy: 1)).fill()
+
+        fillColor.setFill()
+        NSBezierPath(ovalIn: bounds.insetBy(dx: 2, dy: 2)).fill()
     }
 }
 

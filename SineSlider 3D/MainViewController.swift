@@ -112,7 +112,21 @@ final class MainViewController: NSViewController {
 
         gradientView.translatesAutoresizingMaskIntoConstraints = false
         gradientView.onPositionChange = { [weak self] position in
-            self?.updateSample(at: position)
+            guard let self else {
+                return
+            }
+            updateSample(at: position)
+            visualizationView.showMarker(at: position, using: colorFactory)
+        }
+        gradientView.onHoverStateChange = { [weak self] isHovering in
+            guard let self else {
+                return
+            }
+            if isHovering {
+                visualizationView.showMarker(at: selectedPosition, using: colorFactory)
+            } else {
+                visualizationView.hideMarker()
+            }
         }
 
         configureSampleReadout()

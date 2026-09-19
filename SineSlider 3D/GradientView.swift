@@ -7,6 +7,7 @@ final class GradientView: NSView {
     let colorFactory: ColorFactory
     var position = 0.0
     var onPositionChange: ((Double) -> Void)?
+    var onHoverStateChange: ((Bool) -> Void)?
 
     private var trackingArea: NSTrackingArea?
 
@@ -51,6 +52,15 @@ final class GradientView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         updatePosition(with: event)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        onHoverStateChange?(true)
+        updatePosition(with: event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        onHoverStateChange?(false)
     }
 
     override func mouseDragged(with event: NSEvent) {
