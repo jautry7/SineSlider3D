@@ -15,6 +15,7 @@ final class GradientView: NSView {
     }
 
     private var trackingArea: NSTrackingArea?
+    private var isHovering = false
 
     private var gradientRect: NSRect {
         NSRect(
@@ -60,11 +61,15 @@ final class GradientView: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
+        isHovering = true
+        needsDisplay = true
         onHoverStateChange?(true)
         updatePosition(with: event)
     }
 
     override func mouseExited(with event: NSEvent) {
+        isHovering = false
+        needsDisplay = true
         onHoverStateChange?(false)
     }
 
@@ -96,7 +101,9 @@ final class GradientView: NSView {
         NSGraphicsContext.restoreGraphicsState()
 
         drawStopMarkers()
-        drawPositionIndicators()
+        if isHovering {
+            drawPositionIndicators()
+        }
     }
 
     private func color(at position: Double) -> NSColor {

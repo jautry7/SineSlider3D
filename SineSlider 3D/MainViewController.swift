@@ -35,6 +35,7 @@ final class MainViewController: NSViewController {
 
     private var selectedChannel: ColorChannel = .red
     private var selectedPosition = 0.0
+    private var isHoveringGradient = false
     private var stopCount = 5
     private var showsLinearApproximation = false
     private var approximationStops: [CSSGradientStop]?
@@ -117,21 +118,26 @@ final class MainViewController: NSViewController {
                 return
             }
             updateSample(at: position)
-            visualizationView.showMarker(
-                at: position,
-                components: displayedComponents(at: position)
-            )
+            if isHoveringGradient {
+                visualizationView.showMarker(
+                    at: position,
+                    components: displayedComponents(at: position)
+                )
+            }
         }
         gradientView.onHoverStateChange = { [weak self] isHovering in
             guard let self else {
                 return
             }
+            isHoveringGradient = isHovering
             if isHovering {
+                updateSample(at: selectedPosition)
                 visualizationView.showMarker(
                     at: selectedPosition,
                     components: displayedComponents(at: selectedPosition)
                 )
             } else {
+                clearSampleReadout()
                 visualizationView.hideMarker()
             }
         }
@@ -333,7 +339,7 @@ final class MainViewController: NSViewController {
     }
 
     private func makeSampleValueLabel(width: CGFloat) -> NSTextField {
-        let valueLabel = NSTextField(string: "0")
+        let valueLabel = NSTextField(string: "-")
         valueLabel.isEditable = false
         valueLabel.isSelectable = false
         valueLabel.isBezeled = true
@@ -342,6 +348,7 @@ final class MainViewController: NSViewController {
         valueLabel.backgroundColor = .controlBackgroundColor
         valueLabel.alignment = .center
         valueLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+        valueLabel.textColor = .tertiaryLabelColor
         valueLabel.widthAnchor.constraint(equalToConstant: width).isActive = true
         return valueLabel
     }
@@ -447,11 +454,26 @@ final class MainViewController: NSViewController {
         }
 
         selectedPosition = min(1.0, max(0.0, position))
+        guard isHoveringGradient else {
+            clearSampleReadout()
+            return
+        }
+
         sampleValueLabels[0].stringValue = "\(Int((selectedPosition * 100).rounded()))"
+        sampleValueLabels[0].textColor = .labelColor
         let components = displayedComponents(at: selectedPosition)
         for channel in ColorChannel.allCases {
             let value = components.eightBitValue(for: channel)
-            sampleValueLabels[channel.rawValue + 1].stringValue = "\(value)"
+            let valueLabel = sampleValueLabels[channel.rawValue + 1]
+            valueLabel.stringValue = "\(value)"
+            valueLabel.textColor = .labelColor
+        }
+    }
+
+    private func clearSampleReadout() {
+        for valueLabel in sampleValueLabels {
+            valueLabel.stringValue = "-"
+            valueLabel.textColor = .tertiaryLabelColor
         }
     }
 
