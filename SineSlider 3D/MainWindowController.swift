@@ -4,6 +4,7 @@ final class MainWindowController: NSWindowController {
     convenience init() {
         let contentViewController = MainViewController()
         let contentSize = contentViewController.view.fittingSize
+        contentViewController.view.setFrameSize(contentSize)
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: contentSize),
             styleMask: [.titled, .closable, .miniaturizable],
