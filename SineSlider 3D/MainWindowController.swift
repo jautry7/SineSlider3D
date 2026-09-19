@@ -15,7 +15,7 @@ final class MainWindowController: NSWindowController {
         window.contentViewController = contentViewController
         window.center()
         window.isReleasedWhenClosed = false
-        window.backgroundColor = .underPageBackgroundColor
+        window.backgroundColor = .windowBackgroundColor
 
         self.init(window: window)
     }

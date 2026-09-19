@@ -6,11 +6,13 @@ final class MainViewController: NSViewController {
         static let bottomPadding: CGFloat = 36
         static let leadingPadding: CGFloat = 36
         static let trailingPadding: CGFloat = 36
-        static let columnSpacing: CGFloat = 40
+        static let columnSpacing: CGFloat = 28
+        static let inspectorWidth: CGFloat = 300
     }
 
     private let colorFactory = ColorFactory()
-    private lazy var graphView = GraphView(colorFactory: colorFactory)
+    private let visualizationView = VisualizationPlaceholderView()
+    private lazy var gradientView = GradientView(colorFactory: colorFactory)
     private let channelSelector = NSSegmentedControl(
         labels: ColorChannel.allCases.map(\.name),
         trackingMode: .selectOne,
@@ -21,10 +23,20 @@ final class MainViewController: NSViewController {
     private let sampleStack = NSStackView()
     private let sampleContainer = NSView()
     private let leftColumn = NSStackView()
-    private let leftColumnContainer = NSView()
-    private let gradientToValuesSpacing: CGFloat = 16
+    private let rightColumn = NSStackView()
+    private let stopCountLabel = NSTextField(labelWithString: "20 stops")
+    private let stopCountSlider = ChannelSlider(
+        value: 20,
+        minValue: 2,
+        maxValue: 50,
+        target: nil,
+        action: nil
+    )
 
     private var selectedChannel: ColorChannel = .red
+    private var selectedPosition = 0.0
+    private var stopCount = 20
+    private var showsLinearApproximation = true
     private var sliders: [CurveTransform: ChannelSlider] = [:]
     private var percentageLabels: [CurveTransform: NSTextField] = [:]
     private var sampleValueLabels: [NSTextField] = []
@@ -41,57 +53,21 @@ final class MainViewController: NSViewController {
     }
 
     private func configureLayout() {
-        graphView.translatesAutoresizingMaskIntoConstraints = false
-        graphView.onCursorChange = { [weak self] x in
-            self?.updateSample(at: x)
-        }
-        configureSampleReadout()
-        sampleContainer.translatesAutoresizingMaskIntoConstraints = false
-        sampleContainer.addSubview(sampleStack)
+        configureLeftColumn()
 
-        leftColumn.orientation = .vertical
-        leftColumn.alignment = .leading
-        leftColumn.spacing = gradientToValuesSpacing
-        leftColumn.translatesAutoresizingMaskIntoConstraints = false
-        leftColumn.addArrangedSubview(graphView)
-        leftColumn.addArrangedSubview(sampleContainer)
+        rightColumn.orientation = .vertical
+        rightColumn.alignment = .leading
+        rightColumn.spacing = 24
+        rightColumn.translatesAutoresizingMaskIntoConstraints = false
 
-        leftColumnContainer.translatesAutoresizingMaskIntoConstraints = false
-        leftColumnContainer.addSubview(leftColumn)
+        let controlsInspector = makeControlsInspector()
+        let cssInspector = makeCSSInspector()
+        rightColumn.addArrangedSubview(controlsInspector)
+        rightColumn.addArrangedSubview(cssInspector)
 
-        let inspector = NSBox()
-        inspector.boxType = .custom
-        inspector.titlePosition = .noTitle
-        inspector.borderWidth = 0
-        inspector.cornerRadius = 10
-        inspector.fillColor = .tertiarySystemFill
-        inspector.contentViewMargins = .zero
-        inspector.translatesAutoresizingMaskIntoConstraints = false
-        let inspectorContent = inspector.contentView!
-
-        channelSelector.selectedSegment = ColorChannel.red.rawValue
-        channelSelector.selectedSegmentBezelColor = .darkGray
-        channelSelector.target = self
-        channelSelector.action = #selector(selectChannel(_:))
-        channelSelector.translatesAutoresizingMaskIntoConstraints = false
-        inspectorContent.addSubview(channelSelector)
-
-        controlsStack.orientation = .vertical
-        controlsStack.alignment = .leading
-        controlsStack.distribution = .fill
-        controlsStack.spacing = 30
-        controlsStack.translatesAutoresizingMaskIntoConstraints = false
-        inspectorContent.addSubview(controlsStack)
-
-        for transform in CurveTransform.allCases {
-            let row = makeSliderRow(for: transform)
-            controlsStack.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: controlsStack.widthAnchor).isActive = true
-        }
-
-        let contentStack = NSStackView(views: [leftColumnContainer, inspector])
+        let contentStack = NSStackView(views: [leftColumn, rightColumn])
         contentStack.orientation = .horizontal
-        contentStack.alignment = .centerY
+        contentStack.alignment = .top
         contentStack.spacing = WindowLayout.columnSpacing
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(contentStack)
@@ -114,36 +90,176 @@ final class MainViewController: NSViewController {
                 constant: -WindowLayout.bottomPadding
             ),
 
-            leftColumnContainer.heightAnchor.constraint(equalTo: inspector.heightAnchor),
-            leftColumn.leadingAnchor.constraint(equalTo: leftColumnContainer.leadingAnchor),
-            leftColumn.trailingAnchor.constraint(equalTo: leftColumnContainer.trailingAnchor),
-            leftColumn.centerYAnchor.constraint(
-                equalTo: leftColumnContainer.centerYAnchor,
-                constant: 2
-            ),
-
-            sampleContainer.widthAnchor.constraint(equalTo: graphView.widthAnchor),
-            sampleContainer.heightAnchor.constraint(equalToConstant: 22),
-            sampleStack.widthAnchor.constraint(
-                equalToConstant: GraphView.plotSize + 12
-            ),
-            sampleStack.trailingAnchor.constraint(
-                equalTo: sampleContainer.trailingAnchor
-            ),
+            visualizationView.widthAnchor.constraint(equalToConstant: VisualizationPlaceholderView.size),
+            visualizationView.heightAnchor.constraint(equalToConstant: VisualizationPlaceholderView.size),
+            gradientView.widthAnchor.constraint(equalToConstant: GradientView.width),
+            sampleContainer.widthAnchor.constraint(equalToConstant: GradientView.width),
+            sampleContainer.heightAnchor.constraint(equalToConstant: 24),
+            sampleStack.leadingAnchor.constraint(equalTo: sampleContainer.leadingAnchor),
+            sampleStack.trailingAnchor.constraint(equalTo: sampleContainer.trailingAnchor),
             sampleStack.topAnchor.constraint(equalTo: sampleContainer.topAnchor),
             sampleStack.bottomAnchor.constraint(equalTo: sampleContainer.bottomAnchor),
 
-            inspector.widthAnchor.constraint(equalToConstant: 300),
+            rightColumn.widthAnchor.constraint(equalToConstant: WindowLayout.inspectorWidth),
+            controlsInspector.widthAnchor.constraint(equalTo: rightColumn.widthAnchor),
+            cssInspector.widthAnchor.constraint(equalTo: rightColumn.widthAnchor)
+        ])
+    }
 
+    private func configureLeftColumn() {
+        visualizationView.translatesAutoresizingMaskIntoConstraints = false
+
+        gradientView.translatesAutoresizingMaskIntoConstraints = false
+        gradientView.onPositionChange = { [weak self] position in
+            self?.updateSample(at: position)
+        }
+
+        configureSampleReadout()
+        sampleContainer.translatesAutoresizingMaskIntoConstraints = false
+        sampleContainer.addSubview(sampleStack)
+
+        leftColumn.orientation = .vertical
+        leftColumn.alignment = .leading
+        leftColumn.spacing = 6
+        leftColumn.translatesAutoresizingMaskIntoConstraints = false
+        leftColumn.addArrangedSubview(visualizationView)
+        leftColumn.addArrangedSubview(gradientView)
+        leftColumn.addArrangedSubview(sampleContainer)
+    }
+
+    private func makeControlsInspector() -> NSBox {
+        let inspector = makeInspectorBox()
+        let inspectorContent = inspector.contentView!
+
+        channelSelector.selectedSegment = ColorChannel.red.rawValue
+        channelSelector.selectedSegmentBezelColor = .darkGray
+        channelSelector.target = self
+        channelSelector.action = #selector(selectChannel(_:))
+        channelSelector.translatesAutoresizingMaskIntoConstraints = false
+        inspectorContent.addSubview(channelSelector)
+
+        controlsStack.orientation = .vertical
+        controlsStack.alignment = .leading
+        controlsStack.distribution = .fill
+        controlsStack.spacing = 24
+        controlsStack.translatesAutoresizingMaskIntoConstraints = false
+        inspectorContent.addSubview(controlsStack)
+
+        for transform in CurveTransform.allCases {
+            let row = makeSliderRow(for: transform)
+            controlsStack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: controlsStack.widthAnchor).isActive = true
+            row.heightAnchor.constraint(equalToConstant: 38).isActive = true
+        }
+
+        NSLayoutConstraint.activate([
             channelSelector.topAnchor.constraint(equalTo: inspectorContent.topAnchor, constant: 20),
             channelSelector.leadingAnchor.constraint(equalTo: inspectorContent.leadingAnchor, constant: 20),
             channelSelector.trailingAnchor.constraint(equalTo: inspectorContent.trailingAnchor, constant: -20),
 
-            controlsStack.topAnchor.constraint(equalTo: channelSelector.bottomAnchor, constant: 30),
+            controlsStack.topAnchor.constraint(equalTo: channelSelector.bottomAnchor, constant: 28),
             controlsStack.leadingAnchor.constraint(equalTo: inspectorContent.leadingAnchor, constant: 28),
             controlsStack.trailingAnchor.constraint(equalTo: inspectorContent.trailingAnchor, constant: -28),
             controlsStack.bottomAnchor.constraint(equalTo: inspectorContent.bottomAnchor, constant: -28)
         ])
+
+        return inspector
+    }
+
+    private func makeCSSInspector() -> NSBox {
+        let inspector = makeInspectorBox()
+        let inspectorContent = inspector.contentView!
+
+        let titleLabel = NSTextField(labelWithString: "Linear approximation")
+        titleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
+
+        let descriptionLabel = NSTextField(
+            wrappingLabelWithString: "Approximate the sinusoidal gradient with\na standard stopped gradient."
+        )
+        descriptionLabel.font = .systemFont(ofSize: 12)
+        descriptionLabel.textColor = .secondaryLabelColor
+
+        let approximationCheckbox = NSButton(
+            checkboxWithTitle: "Show linear approximation",
+            target: self,
+            action: #selector(approximationVisibilityChanged(_:))
+        )
+        approximationCheckbox.state = .on
+
+        let separator = NSBox()
+        separator.boxType = .separator
+
+        let fidelityLabel = NSTextField(labelWithString: "Fidelity")
+        fidelityLabel.font = .systemFont(ofSize: 13)
+
+        stopCountLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        stopCountLabel.textColor = .secondaryLabelColor
+        stopCountLabel.alignment = .right
+
+        let fidelityHeading = NSStackView(views: [fidelityLabel, stopCountLabel])
+        fidelityHeading.orientation = .horizontal
+        fidelityHeading.alignment = .centerY
+        fidelityHeading.distribution = .fill
+
+        stopCountSlider.isContinuous = true
+        stopCountSlider.channelColor = .controlAccentColor
+        stopCountSlider.target = self
+        stopCountSlider.action = #selector(stopCountChanged(_:))
+
+        let copyButton = NSButton(
+            title: "Copy CSS",
+            target: self,
+            action: #selector(copyCSS(_:))
+        )
+        copyButton.bezelStyle = .rounded
+
+        let contentStack = NSStackView(
+            views: [
+                titleLabel,
+                descriptionLabel,
+                approximationCheckbox,
+                separator,
+                fidelityHeading,
+                stopCountSlider,
+                copyButton
+            ]
+        )
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.spacing = 16
+        contentStack.setCustomSpacing(4, after: titleLabel)
+        contentStack.setCustomSpacing(22, after: approximationCheckbox)
+        contentStack.setCustomSpacing(18, after: separator)
+        contentStack.setCustomSpacing(8, after: fidelityHeading)
+        contentStack.setCustomSpacing(20, after: stopCountSlider)
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        inspectorContent.addSubview(contentStack)
+
+        NSLayoutConstraint.activate([
+            contentStack.topAnchor.constraint(equalTo: inspectorContent.topAnchor, constant: 24),
+            contentStack.leadingAnchor.constraint(equalTo: inspectorContent.leadingAnchor, constant: 28),
+            contentStack.trailingAnchor.constraint(equalTo: inspectorContent.trailingAnchor, constant: -28),
+            contentStack.bottomAnchor.constraint(equalTo: inspectorContent.bottomAnchor, constant: -24),
+            descriptionLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            approximationCheckbox.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            separator.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            fidelityHeading.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            stopCountSlider.widthAnchor.constraint(equalTo: contentStack.widthAnchor)
+        ])
+
+        return inspector
+    }
+
+    private func makeInspectorBox() -> NSBox {
+        let inspector = NSBox()
+        inspector.boxType = .custom
+        inspector.titlePosition = .noTitle
+        inspector.borderWidth = 0
+        inspector.cornerRadius = 10
+        inspector.fillColor = .tertiarySystemFill
+        inspector.contentViewMargins = .zero
+        inspector.translatesAutoresizingMaskIntoConstraints = false
+        return inspector
     }
 
     private func configureSampleReadout() {
@@ -152,32 +268,32 @@ final class MainViewController: NSViewController {
         sampleStack.distribution = .fill
         sampleStack.translatesAutoresizingMaskIntoConstraints = false
 
-        var pairs: [NSStackView] = []
-        for name in ["x", "R", "G", "B"] {
-            let valueLabel = NSTextField(string: "0")
-            valueLabel.isEditable = false
-            valueLabel.isSelectable = false
-            valueLabel.isBezeled = true
-            valueLabel.bezelStyle = .roundedBezel
-            valueLabel.drawsBackground = true
-            valueLabel.backgroundColor = .controlBackgroundColor
-            valueLabel.alignment = .center
-            valueLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
-            valueLabel.widthAnchor.constraint(equalToConstant: 38).isActive = true
+        let percentageValue = makeSampleValueLabel(width: 40)
+        let percentageSuffix = NSTextField(labelWithString: "%")
+        percentageSuffix.textColor = .secondaryLabelColor
+        let percentagePair = NSStackView(views: [percentageValue, percentageSuffix])
+        percentagePair.orientation = .horizontal
+        percentagePair.alignment = .centerY
+        percentagePair.spacing = 5
+        sampleValueLabels.append(percentageValue)
 
+        var rgbPairs: [NSStackView] = []
+        for name in ["R", "G", "B"] {
             let nameLabel = NSTextField(labelWithString: name)
             nameLabel.textColor = .secondaryLabelColor
             nameLabel.alignment = .right
+
+            let valueLabel = makeSampleValueLabel(width: 38)
+            sampleValueLabels.append(valueLabel)
 
             let pair = NSStackView(views: [nameLabel, valueLabel])
             pair.orientation = .horizontal
             pair.alignment = .centerY
             pair.spacing = 6
-            pairs.append(pair)
-            sampleValueLabels.append(valueLabel)
+            rgbPairs.append(pair)
         }
 
-        let rgbStack = NSStackView(views: Array(pairs.dropFirst()))
+        let rgbStack = NSStackView(views: rgbPairs)
         rgbStack.orientation = .horizontal
         rgbStack.alignment = .centerY
         rgbStack.spacing = 14
@@ -186,9 +302,23 @@ final class MainViewController: NSViewController {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        sampleStack.addArrangedSubview(pairs[0])
+        sampleStack.addArrangedSubview(percentagePair)
         sampleStack.addArrangedSubview(spacer)
         sampleStack.addArrangedSubview(rgbStack)
+    }
+
+    private func makeSampleValueLabel(width: CGFloat) -> NSTextField {
+        let valueLabel = NSTextField(string: "0")
+        valueLabel.isEditable = false
+        valueLabel.isSelectable = false
+        valueLabel.isBezeled = true
+        valueLabel.bezelStyle = .roundedBezel
+        valueLabel.drawsBackground = true
+        valueLabel.backgroundColor = .controlBackgroundColor
+        valueLabel.alignment = .center
+        valueLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+        valueLabel.widthAnchor.constraint(equalToConstant: width).isActive = true
+        return valueLabel
     }
 
     private func makeSliderRow(for transform: CurveTransform) -> NSView {
@@ -252,18 +382,37 @@ final class MainViewController: NSViewController {
             transform: transform
         )
         percentageLabels[transform]?.stringValue = "\(sender.integerValue)%"
-        graphView.needsDisplay = true
-        updateSample(at: graphView.cursorX)
+        gradientView.needsDisplay = true
+        updateSample(at: selectedPosition)
     }
 
-    private func updateSample(at x: Int) {
+    @objc private func stopCountChanged(_ sender: NSSlider) {
+        stopCount = min(50, max(2, sender.integerValue))
+        sender.integerValue = stopCount
+        stopCountLabel.stringValue = "\(stopCount) stops"
+    }
+
+    @objc private func approximationVisibilityChanged(_ sender: NSButton) {
+        showsLinearApproximation = sender.state == .on
+    }
+
+    @objc private func copyCSS(_ sender: NSButton) {
+        let css = CSSGradientExporter.css(count: stopCount, colorFactory: colorFactory)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(css, forType: .string)
+    }
+
+    private func updateSample(at position: Double) {
         guard sampleValueLabels.count == 4 else {
             return
         }
 
-        sampleValueLabels[0].stringValue = "\(x)"
+        selectedPosition = min(1.0, max(0.0, position))
+        sampleValueLabels[0].stringValue = "\(Int((selectedPosition * 100).rounded()))"
         for channel in ColorChannel.allCases {
-            sampleValueLabels[channel.rawValue + 1].stringValue = "\(colorFactory.value(for: channel, at: x))"
+            let value = colorFactory.value(for: channel, at: selectedPosition)
+            sampleValueLabels[channel.rawValue + 1].stringValue = "\(value)"
         }
     }
 }
