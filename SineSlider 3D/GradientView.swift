@@ -95,6 +95,7 @@ final class GradientView: NSView {
         }
         NSGraphicsContext.restoreGraphicsState()
 
+        drawStopMarkers()
         drawPositionIndicators()
     }
 
@@ -118,6 +119,49 @@ final class GradientView: NSView {
         position = Double((relativeX - gradientRect.minX) / gradientRect.width)
         onPositionChange?(position)
         needsDisplay = true
+    }
+
+    private func drawStopMarkers() {
+        guard let approximationStops else {
+            return
+        }
+
+        let diameter: CGFloat = 12
+        let radius = diameter / 2
+        let edgeInset: CGFloat = 0
+
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(roundedRect: gradientRect, xRadius: 5, yRadius: 5).addClip()
+
+        for stop in approximationStops {
+            let unclampedX = gradientRect.minX + CGFloat(stop.position) * gradientRect.width
+            let centerX = min(
+                gradientRect.maxX - radius - edgeInset,
+                max(gradientRect.minX + radius + edgeInset, unclampedX)
+            )
+            let markerRect = NSRect(
+                x: centerX - radius,
+                y: gradientRect.midY - radius,
+                width: diameter,
+                height: diameter
+            )
+
+            NSColor.black.setFill()
+            NSBezierPath(ovalIn: markerRect).fill()
+
+            NSColor.white.setFill()
+            NSBezierPath(ovalIn: markerRect.insetBy(dx: 1, dy: 1)).fill()
+
+            NSColor(
+                calibratedRed: CGFloat(stop.components.red),
+                green: CGFloat(stop.components.green),
+                blue: CGFloat(stop.components.blue),
+                alpha: 1
+            ).setFill()
+            NSBezierPath(ovalIn: markerRect.insetBy(dx: 2, dy: 2)).fill()
+        }
+
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     private func drawPositionIndicators() {

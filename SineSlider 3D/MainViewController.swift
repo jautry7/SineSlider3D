@@ -28,7 +28,7 @@ final class MainViewController: NSViewController {
     private let stopCountSlider = ChannelSlider(
         value: 5,
         minValue: 2,
-        maxValue: 20,
+        maxValue: 10,
         target: nil,
         action: nil
     )
@@ -412,7 +412,7 @@ final class MainViewController: NSViewController {
     }
 
     @objc private func stopCountChanged(_ sender: NSSlider) {
-        stopCount = min(20, max(2, sender.integerValue))
+        stopCount = min(10, max(2, sender.integerValue))
         sender.integerValue = stopCount
         stopCountLabel.stringValue = "\(stopCount) stops"
         if showsLinearApproximation {

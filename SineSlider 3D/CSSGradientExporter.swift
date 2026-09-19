@@ -9,7 +9,7 @@ enum CSSGradientExporter {
     private static let candidateIntervalCount = 4096
 
     static func stops(count: Int, colorFactory: ColorFactory) -> [CSSGradientStop] {
-        let requestedCount = min(20, max(2, count))
+        let requestedCount = min(10, max(2, count))
         var stops = [
             CSSGradientStop(position: 0, components: colorFactory.components(at: 0)),
             CSSGradientStop(position: 1, components: colorFactory.components(at: 1))
