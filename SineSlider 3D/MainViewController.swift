@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 final class MainViewController: NSViewController {
     private enum WindowLayout {
@@ -394,12 +395,13 @@ final class MainViewController: NSViewController {
         selectedChannel = ColorChannel(rawValue: channelSelector.selectedSegment) ?? .red
 
         for transform in CurveTransform.allCases {
-            let percentage = Int(
-                (colorFactory.factor(for: selectedChannel, transform: transform) * 100).rounded()
-            )
-            sliders[transform]?.integerValue = percentage
+            let percentage = colorFactory.factor(
+                for: selectedChannel,
+                transform: transform
+            ) * 100
+            sliders[transform]?.doubleValue = percentage
             sliders[transform]?.channelColor = selectedChannel.displayColor
-            percentageLabels[transform]?.stringValue = "\(percentage)%"
+            percentageLabels[transform]?.stringValue = "\(Int(percentage.rounded()))%"
         }
     }
 
@@ -446,6 +448,76 @@ final class MainViewController: NSViewController {
 
     @objc func resetVisualizationZoom(_ sender: Any?) {
         visualizationView.resetZoom()
+    }
+
+    @objc func importGradient(_ sender: Any?) {
+        guard let window = view.window else {
+            return
+        }
+
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url, let self else {
+                return
+            }
+
+            do {
+                let data = try Data(contentsOf: url)
+                let document = try JSONDecoder().decode(GradientDocument.self, from: data)
+                try document.apply(to: colorFactory)
+                selectChannel(nil)
+                refreshGradientPresentation()
+                updateSample(at: selectedPosition)
+            } catch {
+                showFileError(
+                    title: "Invalid Gradient File",
+                    message: "The selected file is not a valid SineSlider 3D gradient."
+                )
+            }
+        }
+    }
+
+    @objc func exportGradient(_ sender: Any?) {
+        guard let window = view.window else {
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "custom-gradient.json"
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url, let self else {
+                return
+            }
+
+            do {
+                let document = GradientDocument(colorFactory: colorFactory)
+                let data = try document.encodedData()
+                try data.write(to: url, options: .atomic)
+            } catch {
+                showFileError(
+                    title: "Unable to Export Gradient",
+                    message: "The gradient could not be saved."
+                )
+            }
+        }
+    }
+
+    private func showFileError(title: String, message: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: "OK")
+
+        if let window = view.window {
+            alert.beginSheetModal(for: window)
+        } else {
+            alert.runModal()
+        }
     }
 
     private func updateSample(at position: Double) {

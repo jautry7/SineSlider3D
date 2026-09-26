@@ -37,6 +37,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         applicationMenuItem.submenu = applicationMenu
 
+        let fileMenuItem = NSMenuItem()
+        let fileMenu = NSMenu(title: "File")
+        fileMenu.addItem(
+            withTitle: "Import…",
+            action: #selector(MainViewController.importGradient(_:)),
+            keyEquivalent: "o"
+        )
+        fileMenu.addItem(
+            withTitle: "Export…",
+            action: #selector(MainViewController.exportGradient(_:)),
+            keyEquivalent: "s"
+        )
+        fileMenuItem.submenu = fileMenu
+        mainMenu.addItem(fileMenuItem)
+
         let viewMenuItem = NSMenuItem()
         let viewMenu = NSMenu(title: "View")
         viewMenu.addItem(
